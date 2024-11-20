@@ -1,7 +1,7 @@
 import asyncio
 import json
 import websockets
-from config import quicknode_ws_url, uniswap_factory_address, pair_created_topic
+from config import quicknode_ws_url, uniswap_factory_address, pair_created_topic, CLEAN_MODE
 from token_security import check_token_security
 
 async def listen_for_pair_created_events():
@@ -19,7 +19,8 @@ async def listen_for_pair_created_events():
             ]
         }
         await ws.send(json.dumps(payload))
-        print("Subscribed to PairCreated events. Listening for new pairs...")
+        if not CLEAN_MODE:
+            print("Subscribed to PairCreated events. Listening for new pairs...")
 
         while True:
             try:
@@ -33,20 +34,27 @@ async def listen_for_pair_created_events():
                     token1 = "0x" + log["topics"][2][26:]
                     pair_contract_address = "0x" + log["data"][26:66]
 
-                    print("\nPairCreated event detected:")
-                    print(f"Token 0: {token0}")
-                    print(f"Token 1: {token1}")
-                    print(f"Pair Contract Address: {pair_contract_address}")
-                    print(json.dumps(log, indent=4))
+                    token0_trusted = check_token_security(token0)
+                    token1_trusted = check_token_security(token1)
 
-                    check_token_security(token0)
-                    check_token_security(token1)
-                else:
+                    if CLEAN_MODE:
+                        if token0_trusted and token1_trusted:
+                            print(f"Trusted Pair Detected: Token 0: {token0}, Token 1: {token1}, Pair Address: {pair_contract_address}")
+                    else:
+                        print("\nPairCreated event detected:")
+                        print(f"Token 0: {token0}")
+                        print(f"Token 1: {token1}")
+                        print(f"Pair Contract Address: {pair_contract_address}")
+                        print(json.dumps(log, indent=4))
+
+                elif not CLEAN_MODE:
                     print("Received heartbeat or other message:", message)
             except websockets.exceptions.ConnectionClosed as e:
-                print(f"Connection closed with error: {e}. Reconnecting...")
+                if not CLEAN_MODE:
+                    print(f"Connection closed with error: {e}. Reconnecting...")
                 await asyncio.sleep(5)
                 await listen_for_pair_created_events()
             except Exception as e:
-                print(f"Error: {e}")
+                if not CLEAN_MODE:
+                    print(f"Error: {e}")
                 break

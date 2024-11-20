@@ -16,15 +16,11 @@ def check_token_security(token_address):
         data_str = str(response)
 
         if "'trust_list': '1'" in data_str:
-            print(f"The token at address {token_address} is on the trust list and is considered safe.")
             return True
 
-        if is_token_safe(data_str):
-            print(f"The token at address {token_address} appears safe to buy.")
-        else:
-            print(f"The token at address {token_address} may not be safe to buy.")
+        return is_token_safe(data_str)
     except Exception as e:
-        print(f"Error checking security for token {token_address}: {e}")
+        return False
 
 def is_token_safe(data_str):
     safety_criteria = [
@@ -46,7 +42,6 @@ def is_token_safe(data_str):
 
     for criterion in safety_criteria:
         if criterion not in data_str:
-            print(f"Token does not meet safety criterion: {criterion}")
             return False
 
     return True
