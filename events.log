@@ -1,1 +1,8 @@
 2025-02-22 20:14:30,583 - ERROR - Connection closed: no close frame received or sent
+2025-02-22 20:18:48,783 - ERROR - Subscription error: {'code': -32007, 'message': '15/second request limit reached - reduce calls per second or upgrade your account at quicknode.com'}
+2025-02-22 20:27:27,910 - ERROR - Subscription error: {'code': -32007, 'message': '15/second request limit reached - reduce calls per second or upgrade your account at quicknode.com'}
+2025-02-22 20:29:22,400 - ERROR - Subscription error: {'code': -32007, 'message': '15/second request limit reached - reduce calls per second or upgrade your account at quicknode.com'}
+2025-02-22 20:29:48,479 - ERROR - Subscription error: {'code': -32007, 'message': '15/second request limit reached - reduce calls per second or upgrade your account at quicknode.com'}
+2025-02-22 20:43:35,370 - ERROR - Subscription error: {'code': -32007, 'message': '15/second request limit reached - reduce calls per second or upgrade your account at quicknode.com'}
+2025-02-22 20:44:15,551 - ERROR - Subscription error: {'code': -32007, 'message': '15/second request limit reached - reduce calls per second or upgrade your account at quicknode.com'}
+2025-02-22 20:44:15,675 - ERROR - Error in event listener: server rejected WebSocket connection: HTTP 429

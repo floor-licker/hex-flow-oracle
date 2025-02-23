@@ -1,5 +1,18 @@
+# Core Dependencies
 web3[async]>=6.0.0
 websockets>=10.0
-goplus
+goplus>=0.2.4
 aiohttp>=3.8.0
+tqdm>=4.65.0
+
+# Testing Dependencies
+pytest>=7.0.0
+pytest-asyncio>=0.20.0
+pytest-cov>=4.0.0
+hypothesis>=6.75.3
+eth-tester>=0.12.1b1
+py-evm>=0.11.0b1
+
+# Optional Dependencies
+# Add any optional dependencies here
 

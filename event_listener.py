@@ -21,6 +21,8 @@ from config import (
     CLEAN_MODE
 )
 from token_security import check_token_security
+from rate_limiter import AdaptiveRateLimiter
+from retry_strategy import ExponentialBackoffStrategy, RetryConfig
 
 # Setup logging
 logging.basicConfig(
@@ -113,8 +115,8 @@ async def handle_v2_event(log):
     token1 = "0x" + log["topics"][2][26:]
     pair_address = "0x" + log["data"][26:66]
     
-    token0_trusted = check_token_security(token0)
-    token1_trusted = check_token_security(token1)
+    token0_trusted = await check_token_security(token0)
+    token1_trusted = await check_token_security(token1)
     
     if CLEAN_MODE:
         if token0_trusted and token1_trusted:
@@ -133,8 +135,8 @@ async def handle_v3_event(log):
     fee_tier = int(log["topics"][3], 16)  # V3 specific
     pool_address = "0x" + log["data"][26:66]
     
-    token0_trusted = check_token_security(token0)
-    token1_trusted = check_token_security(token1)
+    token0_trusted = await check_token_security(token0)
+    token1_trusted = await check_token_security(token1)
     
     if CLEAN_MODE:
         if token0_trusted and token1_trusted:
@@ -146,27 +148,6 @@ async def handle_v3_event(log):
         print(f"Fee Tier: {fee_tier}")
         print(f"Pool Address: {pool_address}")
         print(json.dumps(log, indent=4))
-
-class RateLimiter:
-    def __init__(self, rate_limit=10, time_window=1.0):
-        self.rate_limit = rate_limit
-        self.time_window = time_window
-        self.tokens = rate_limit
-        self.last_update = asyncio.get_event_loop().time()
-
-    async def acquire(self):
-        now = asyncio.get_event_loop().time()
-        time_passed = now - self.last_update
-        self.tokens = min(self.rate_limit, self.tokens + time_passed * (self.rate_limit / self.time_window))
-        self.last_update = now
-
-        if self.tokens < 1:
-            wait_time = (1 - self.tokens) * (self.time_window / self.rate_limit)
-            await asyncio.sleep(wait_time)
-            return await self.acquire()
-
-        self.tokens -= 1
-        return True
 
 class WebSocketPool:
     def __init__(self, url, pool_size=3):
@@ -256,60 +237,141 @@ class AddressLookup:
         if handler:
             await handler(log)
 
+class EventListener:
+    def __init__(self):
+        self.rate_limiter = AdaptiveRateLimiter(
+            initial_rate=10,
+            window_size=1.5
+        )
+        self.retry_strategy = ExponentialBackoffStrategy(
+            RetryConfig(
+                base_delay=2.0,
+                max_delay=120.0,
+                exponential_base=2.0
+            )
+        )
+        self.connection_pool = WebSocketPool(quicknode_ws_url, pool_size=1)  # Reduced pool size
+
+    async def _subscribe(self):
+        subscriptions = [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "eth_subscribe",
+                "params": [
+                    "logs",
+                    {
+                        "address": [  # Batch addresses in single subscription
+                            uniswap_v2_factory_address,
+                            uniswap_v3_factory_address
+                        ],
+                        "topics": [
+                            [v2_pair_created_topic, v3_pool_created_topic]  # Multiple topics
+                        ]
+                    }
+                ]
+            }
+        ]
+
+        async with self.connection_pool.get_connection() as ws:
+            for sub in subscriptions:
+                if not await self.rate_limiter.acquire():
+                    await self.retry_strategy.wait()
+                    continue
+                
+                try:
+                    await ws.send(json.dumps(sub))
+                    response = await ws.recv()
+                    resp_data = json.loads(response)
+                    
+                    if "error" in resp_data:
+                        self.rate_limiter._handle_failure()
+                        raise Exception(resp_data["error"])
+                    else:
+                        self.rate_limiter._handle_success()
+                        
+                except Exception as e:
+                    logging.error(f"Subscription error: {e}")
+                    await self.retry_strategy.handle_error(e)
+
+    async def subscribe_to_events(self):
+        while True:
+            try:
+                if await self.rate_limiter.acquire():
+                    # Make subscription request
+                    await self._subscribe()
+                else:
+                    await self.retry_strategy.wait()
+            except Exception as e:
+                self.rate_limiter._handle_failure()
+                await self.retry_strategy.handle_error(e)
+
 @AsyncRetryContext()
 async def listen_for_pair_created_events():
     event_buffer = AsyncEventBuffer()
     weak_cache = WeakCache()
-    rate_limiter = RateLimiter(rate_limit=10, time_window=1.0)
+    rate_limiter = AdaptiveRateLimiter(
+        initial_rate=5,  # Reduced from 8
+        window_size=2.0,  # Increased from 1.5
+        failure_threshold=2,  # More sensitive to failures
+        recovery_timeout=120.0,  # Longer recovery
+        adaptive_factor=0.3  # More aggressive rate reduction
+    )
     
     while True:
         try:
+            # Add delay between connection attempts
+            await asyncio.sleep(2)
+            
             async with websockets.connect(quicknode_ws_url) as ws:
-                # Subscribe to events with rate limiting
-                subscriptions = [
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 1,
-                        "method": "eth_subscribe",
-                        "params": [
-                            "logs",
-                            {
-                                "address": uniswap_v2_factory_address,
-                                "topics": [v2_pair_created_topic]
-                            }
-                        ]
-                    },
-                    {
-                        "jsonrpc": "2.0",
-                        "id": 2,
-                        "method": "eth_subscribe",
-                        "params": [
-                            "logs",
-                            {
-                                "address": uniswap_v3_factory_address,
-                                "topics": [v3_pool_created_topic]
-                            }
-                        ]
-                    }
-                ]
+                # Combine subscriptions into one request
+                subscription = {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "method": "eth_subscribe",
+                    "params": [
+                        "logs",
+                        {
+                            "address": [
+                                uniswap_v2_factory_address,
+                                uniswap_v3_factory_address
+                            ],
+                            "topics": [
+                                [v2_pair_created_topic, v3_pool_created_topic]
+                            ]
+                        }
+                    ]
+                }
 
-                # Subscribe with rate limiting
-                for sub in subscriptions:
-                    await rate_limiter.acquire()
-                    await ws.send(json.dumps(sub))
-                    response = await ws.recv()
-                    
-                    # Check for subscription errors
-                    resp_data = json.loads(response)
-                    if "error" in resp_data:
-                        logging.error(f"Subscription error: {resp_data['error']}")
-                        if resp_data["error"].get("code") == -32007:  # Rate limit error
-                            await asyncio.sleep(2)  # Wait before retrying
-                            continue
+                while True:  # Retry loop for subscription
+                    if not await rate_limiter.acquire():
+                        await asyncio.sleep(5)  # Increased delay
+                        continue
+                        
+                    try:
+                        await ws.send(json.dumps(subscription))
+                        response = await ws.recv()
+                        resp_data = json.loads(response)
+                        
+                        if "error" in resp_data:
+                            rate_limiter._handle_failure()
+                            if resp_data["error"].get("code") == -32007:
+                                await asyncio.sleep(10)  # Longer delay for rate limit
+                                continue
+                            raise Exception(resp_data["error"])
+                        
+                        rate_limiter._handle_success()
+                        break  # Successfully subscribed
+                        
+                    except Exception as e:
+                        logging.error(f"Subscription attempt failed: {e}")
+                        rate_limiter._handle_failure()
+                        await asyncio.sleep(5)
                 
                 if not CLEAN_MODE:
                     print("Successfully subscribed to V2 and V3 events. Listening for new pairs/pools...")
 
+                # Event listening loop
                 while True:
                     try:
                         message = await ws.recv()
@@ -317,19 +379,17 @@ async def listen_for_pair_created_events():
 
                         if event_data.get("params") and event_data["params"].get("result"):
                             log = event_data["params"]["result"]
-                            await rate_limiter.acquire()
+                            
+                            # Use event buffer for backpressure
+                            await event_buffer.process_with_backpressure({
+                                "log": log,
+                                "timestamp": datetime.now().isoformat()
+                            })
                             
                             if log["address"].lower() == uniswap_v2_factory_address.lower():
                                 await handle_v2_event(log)
                             elif log["address"].lower() == uniswap_v3_factory_address.lower():
                                 await handle_v3_event(log)
-
-                        elif "error" in event_data:
-                            if event_data["error"].get("code") == -32007:  # Rate limit error
-                                logging.warning("Rate limit hit, waiting...")
-                                await asyncio.sleep(2)
-                            else:
-                                logging.error(f"WebSocket error: {event_data['error']}")
 
                     except websockets.exceptions.ConnectionClosed as e:
                         logging.error(f"Connection closed: {e}")
@@ -337,4 +397,5 @@ async def listen_for_pair_created_events():
 
         except Exception as e:
             logging.error(f"Error in event listener: {e}")
-            await asyncio.sleep(5)  # Wait before reconnecting
+            rate_limiter._handle_failure()
+            await asyncio.sleep(10)  # Increased delay between retries
