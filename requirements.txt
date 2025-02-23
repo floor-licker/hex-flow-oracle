@@ -1,4 +1,5 @@
-web3
-websockets
+web3[async]>=6.0.0
+websockets>=10.0
 goplus
+aiohttp>=3.8.0
 
