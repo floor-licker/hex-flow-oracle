@@ -2,6 +2,7 @@ from goplus.token import Token
 import asyncio
 from functools import lru_cache
 from time import time
+from web3 import Web3
 
 # Initialize Token checker, add access token if needed
 token_checker = Token(access_token=None)
@@ -86,3 +87,24 @@ class SecurityCache:
         if len(self.cache) > self.max_size:
             sorted_items = sorted(self.cache.items(), key=lambda x: x[1][1])
             self.cache = dict(sorted_items[-self.max_size:])
+
+    async def batch_check(self, token_addresses):
+        """Check multiple tokens at once"""
+        # Use map with lambda to transform addresses
+        checksum_addresses = list(map(lambda addr: Web3.to_checksum_address(addr), token_addresses))
+        
+        # Use filter with lambda to find uncached tokens
+        uncached = list(filter(lambda addr: addr not in self.cache, checksum_addresses))
+        
+        # Fetch uncached tokens
+        if uncached:
+            results = await self._fetch_security_info(uncached)
+            
+            # Use lambda in dictionary comprehension
+            self.cache.update({
+                addr: (result, time.time()) 
+                for addr, result in zip(uncached, results)
+            })
+            
+        # Return all results
+        return {addr: self.cache[addr][0] for addr in checksum_addresses}

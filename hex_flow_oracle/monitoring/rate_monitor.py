@@ -2,7 +2,6 @@ from tqdm import tqdm
 import asyncio
 import time
 from collections import deque
-from datetime import datetime, timedelta
 
 class RateMonitor:
     def __init__(self, window_size=1.0, 
@@ -44,7 +43,7 @@ class RateMonitor:
         
         # Check alert threshold using lambda
         if self.alert_threshold(current_rate):
-            self.pbar.colour = 'red'  # Visual alert
+            self.pbar.colour = 'red'
         else:
             self.pbar.colour = 'green'
             
@@ -54,7 +53,7 @@ class RateMonitor:
         """Continuously update the display"""
         while True:
             self._update_display()
-            await asyncio.sleep(0.1)  # Update 10 times per second
+            await asyncio.sleep(0.1)
 
     def close(self):
         self.pbar.close() 
