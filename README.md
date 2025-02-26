@@ -1,6 +1,6 @@
 ![Alt text](images/cover-art.png)
 
-# Hex-Flow Oracle: Advanced DeFi Pool Monitoring System
+# Hex-Flow Oracle: Advanced Liquidity Pool Monitoring System
 
 A high-performance, production-grade system for monitoring Uniswap V2/V3 liquidity pool deployments with sophisticated security validation and event processing capabilities.
 
